@@ -2,15 +2,22 @@
 # igpu-run — launch an app on the Intel iGPU (offload from NVIDIA dGPU)
 # Usage: igpu-run <app> [args...]
 #
-# Why: Hyprland (compositor) stays on the NVIDIA dGPU (primary), but light
-# always-running apps (browser, Discord, Telegram, Spotify) render on the
-# Intel iGPU instead. Saves dGPU power/VRAM; iGPU handles UI + video decode.
+# Hyprland (compositor) stays on the NVIDIA dGPU (primary); light apps render
+# on the Intel iGPU instead. See https://github.com/zidanefaqih/igpu-offload
 #
-# Requires: DRI_PRIME device path of the iGPU (default: renderD128 on this
-# laptop = Intel TigerLake UHD Graphics, PCI 00:02.0).
+# Key trick: the NVIDIA EGL vendor grabs every EGL device while it owns the
+# display, so we must pin the GLX/EGL vendor to Mesa *and* select the iGPU
+# via DRI_PRIME. Vulkan is routed with VK_LOADER_DRM_DEVICE_SELECT.
 
-IGPU_DEVICE="${IGPU_DEVICE:-pci-0000_00_02_0}"
+IGPU_DEVICE="${IGPU_DEVICE:-pci-0000_00_02_0}"   # Intel TigerLake UHD (00:02.0)
+MESA_EGL_ICD="${MESA_EGL_ICD:-/usr/share/glvnd/egl_vendor.d/50_mesa.json}"
 
+# Mesa offload (OpenGL / EGL)
 export DRI_PRIME="$IGPU_DEVICE"
+export __GLX_VENDOR_LIBRARY_NAME=mesa
+export __EGL_VENDOR_LIBRARY_FILENAMES="$MESA_EGL_ICD"
+
+# Vulkan offload (index 0 = iGPU on this laptop; see `vulkaninfo --summary`)
+export VK_LOADER_DRM_DEVICE_SELECT=0
 
 exec "$@"
