@@ -15,20 +15,55 @@ This repo flips the workload split:
 
 ```
 dGPU (NVIDIA) : compositor + games + CUDA/AI + heavy GPU apps
-iGPU (Intel)  : browser, Discord, Telegram, Spotify (UI + video decode)
+iGPU (Intel)  : native-toolkit apps (Qt/GTK), video decode, UI
 ```
 
 Result: dGPU can drop to low power when you launch a game, VRAM stays free,
-and the iGPU finally earns its keep. Video decode (AV1/VP9/H.264) on TigerLake
-iGPU is excellent, so YouTube in Brave is actually *better* on the iGPU.
+and the iGPU finally earns its keep.
 
 ## What's inside
 
 | File | Purpose |
 |---|---|
-| `bin/igpu-run` | Wrapper: `igpu-run <app>` launches any app on the iGPU (`DRI_PRIME`) |
+| `bin/igpu-run` | Wrapper: `igpu-run <app>` launches any app on the iGPU |
 | `desktop/*.desktop` | App launchers that auto-offload (Brave, Discord, Telegram, Spotify) |
 | `docs/nvidia-crash-fix.md` | Full write-up: diagnosing & fixing repeated GSP crashes (Xid 62 → 154 → 44, `RmInitAdapter failed 0x62:0x55`) caused by suspend/resume + runtime D3 on nvidia-open |
+
+## The GLVND trap (read this!)
+
+The NVIDIA EGL vendor (which owns the display) **intercepts every EGL device
+index**. So plain `DRI_PRIME=...` silently does nothing for GL/EGL apps —
+you end up on the dGPU anyway, with 0 ns of iGPU engine time.
+
+`igpu-run` therefore does **three** things:
+
+```bash
+export DRI_PRIME="$IGPU_DEVICE"                # Mesa device selection
+export __GLX_VENDOR_LIBRARY_NAME=mesa         # GLX → Mesa, not NVIDIA
+export __EGL_VENDOR_LIBRARY_FILENAMES=...mesa # EGL → Mesa, not NVIDIA
+export VK_LOADER_DRM_DEVICE_SELECT=0          # Vulkan → iGPU
+```
+
+Verified working:
+
+```
+$ igpu-run glxinfo -B | grep renderer
+OpenGL renderer string: Mesa Intel(R) UHD Graphics (TGL GT1)
+$ igpu-run eglinfo -B | grep vendor
+EGL vendor string: Mesa Project
+```
+
+## ⚠️ Which apps actually offload
+
+| App | Toolkit | Offloads? |
+|---|---|---|
+| Telegram | Qt (system EGL/Mesa) | ✅ **yes** — verified 350 ms iGPU engine time, holds only `renderD128` |
+| GTK apps (nautilus, gnome-*) | GTK4/GL (Mesa) | ✅ yes |
+| mpv, games with Vulkan/GL via Mesa | Mesa | ✅ yes |
+| **Chromium-family** (Brave, Chrome, Discord, Spotify/CEF) | **bundles its own ANGLE** (`libGLESv2.so` inside the app dir) | ❌ **no** — the bundled ANGLE ignores system EGL vendor env and picks the default device (dGPU) |
+
+For Chromium-family apps, options are: keep them on the dGPU (fine), or run
+them with `--use-angle=swiftshader` (software rendering — not recommended).
 
 ## Install
 
@@ -43,21 +78,20 @@ update-desktop-database ~/.local/share/applications/ 2>/dev/null
 ## Usage
 
 ```bash
-# any app, ad-hoc:
-igpu-run brave
-igpu-run discord
-
-# or just use the .desktop launchers (they call igpu-run internally)
+igpu-run telegram
+igpu-run mpv video.mkv
 ```
 
-Verify which GPU a running app uses:
+Verify which GPU a running app actually *renders* on:
 
 ```bash
-# list render nodes an app holds (r128 = iGPU, r129 = dGPU on this laptop)
-ls -l /proc/$(pgrep -x brave | head -1)/fd | grep -o "renderD[0-9]*" | sort -u
-
-# check iGPU is actually rendering (engine time should be > 0ns)
-cat /proc/<pid>/fdinfo/<fd> | grep drm-engine-render
+for fd in /proc/<pid>/fdinfo/*; do
+  node=$(readlink /proc/<pid>/fd/$(basename $fd) 2>/dev/null)
+  case "$node" in
+    *renderD128) echo "iGPU: $(grep drm-engine-render $fd)";;
+    *renderD129) echo "dGPU: $(grep drm-engine-render $fd)";;
+  esac
+done
 ```
 
 ## ⚠️ Do NOT do this
