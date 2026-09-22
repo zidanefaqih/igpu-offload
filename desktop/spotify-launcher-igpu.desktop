@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Spotify (iGPU)
+Comment=Spotify rendered on Intel iGPU (saves dGPU power)
+Exec=igpu-run spotify-launcher %U
+Icon=spotify-launcher
+Terminal=false
+Type=Application
+Categories=Audio;Music;Player;AudioVideo;
+StartupWMClass=spotify
+MimeType=x-scheme-handler/spotify;

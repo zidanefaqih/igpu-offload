@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Discord (iGPU)
+Comment=Discord rendered on Intel iGPU (saves dGPU power)
+Exec=igpu-run /usr/bin/discord --url -- %u
+Icon=discord
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;
+StartupWMClass=discord
+MimeType=x-scheme-handler/discord;

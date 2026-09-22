@@ -1,0 +1,16 @@
+#!/bin/bash
+# igpu-run — launch an app on the Intel iGPU (offload from NVIDIA dGPU)
+# Usage: igpu-run <app> [args...]
+#
+# Why: Hyprland (compositor) stays on the NVIDIA dGPU (primary), but light
+# always-running apps (browser, Discord, Telegram, Spotify) render on the
+# Intel iGPU instead. Saves dGPU power/VRAM; iGPU handles UI + video decode.
+#
+# Requires: DRI_PRIME device path of the iGPU (default: renderD128 on this
+# laptop = Intel TigerLake UHD Graphics, PCI 00:02.0).
+
+IGPU_DEVICE="${IGPU_DEVICE:-pci-0000_00_02_0}"
+
+export DRI_PRIME="$IGPU_DEVICE"
+
+exec "$@"
