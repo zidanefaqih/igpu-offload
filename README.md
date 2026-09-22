@@ -71,13 +71,23 @@ them with `--use-angle=swiftshader` (software rendering — not recommended).
 git clone https://github.com/zidanefaqih/igpu-offload.git
 cd igpu-offload
 install -m 755 bin/igpu-run ~/.local/bin/
-cp desktop/*.desktop ~/.local/share/applications/
-update-desktop-database ~/.local/share/applications/ 2>/dev/null
 ```
+
+Then, to make an app always launch on the iGPU, override its original
+`.desktop` file in `~/.local/share/applications/` (higher priority than
+`/usr/share/applications/`) by wrapping `Exec=` with `igpu-run`:
+
+```bash
+cp /usr/share/applications/org.telegram.desktop.desktop    ~/.local/share/applications/
+sed -i 's|^Exec=Telegram|Exec=igpu-run Telegram|'    ~/.local/share/applications/org.telegram.desktop.desktop
+```
+
+Same name, same icon — the launcher just works, no duplicate entries.
 
 ## Usage
 
 ```bash
+# ad-hoc
 igpu-run telegram
 igpu-run mpv video.mkv
 ```
