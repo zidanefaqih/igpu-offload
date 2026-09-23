@@ -27,7 +27,7 @@ and the iGPU finally earns its keep.
 |---|---|
 | `bin/igpu-run` | Wrapper: `igpu-run <app>` launches any app on the iGPU |
 | `desktop/*.desktop` | App launchers that auto-offload (Brave, Discord, Telegram, Spotify) |
-| `docs/nvidia-crash-fix.md` | Full write-up: diagnosing & fixing repeated GSP crashes (Xid 62 → 154 → 44, `RmInitAdapter failed 0x62:0x55`) caused by suspend/resume + runtime D3 on nvidia-open |
+| `docs/nvidia-crash-fix.md` | Full write-up: repeated GSP crashes (`Xid 62` → 154 → 16/44), why they silently break EGL/GLX — which in turn makes **Steam segfault on launch** (upstream [steam-for-linux#13269](https://github.com/ValveSoftware/steam-for-linux/issues/13269)) — and the working fix: proprietary `nvidia-580xx` with `NVreg_EnableGpuFirmware=0`. |
 
 ## The GLVND trap (read this!)
 
