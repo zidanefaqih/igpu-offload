@@ -1,35 +1,40 @@
-# igpu-offload
+# arch-hybrid-gpu
 
-**Offload lightweight apps to the Intel iGPU on Arch Linux + Hyprland hybrid-GPU laptops (Intel iGPU + NVIDIA dGPU).**
+**Notes & tools for running Arch Linux on Intel + NVIDIA hybrid-GPU laptops.**
 
-> Case study: Acer Nitro / TigerLake-H (Intel UHD) + NVIDIA RTX 3050 Mobile.
+> Case study: Acer Nitro / TigerLake-H (Intel UHD iGPU + NVIDIA RTX 3050 Laptop GPU),
+> Hyprland (uwsm), kernel 7.2.6.
 
-## Why
+Two things live here, both learned the hard way on the same machine:
+
+| | |
+|---|---|
+| **[1. Offload apps to the iGPU](#1-offload-apps-to-the-igpu)** | `igpu-run` — make native-toolkit apps (Qt/GTK) render on the Intel iGPU instead of keeping the dGPU awake 24/7, **including the GLVND trap** that makes plain `DRI_PRIME` silently do nothing. |
+| **[2. Fix NVIDIA GSP crashes](#2-fix-nvidia-gsp-crashes-xid-62)** | Repeated `Xid 62` ("GSP PMU has halted") hangs — and the non-obvious fallout: EGL/GLX silently break, which makes **Steam segfault on launch**. Fix: proprietary `nvidia-580xx` with `NVreg_EnableGpuFirmware=0`. |
+
+---
+
+## 1. Offload apps to the iGPU
 
 On hybrid laptops the compositor (Hyprland) usually renders on the NVIDIA dGPU.
 That means lightweight always-running apps — browser, Discord, Telegram, Spotify —
 keep the dGPU awake 24/7 (~5–17 W idle, VRAM consumed) while the iGPU sits at
 **0 ns render time** doing literally nothing.
 
-This repo flips the workload split:
+This flips the workload split:
 
 ```
 dGPU (NVIDIA) : compositor + games + CUDA/AI + heavy GPU apps
 iGPU (Intel)  : native-toolkit apps (Qt/GTK), video decode, UI
 ```
 
-Result: dGPU can drop to low power when you launch a game, VRAM stays free,
-and the iGPU finally earns its keep.
-
-## What's inside
+### What's inside
 
 | File | Purpose |
 |---|---|
 | `bin/igpu-run` | Wrapper: `igpu-run <app>` launches any app on the iGPU |
-| `desktop/*.desktop` | App launchers that auto-offload (Brave, Discord, Telegram, Spotify) |
-| `docs/nvidia-crash-fix.md` | Full write-up: repeated GSP crashes (`Xid 62` → 154 → 16/44), why they silently break EGL/GLX — which in turn makes **Steam segfault on launch** (upstream [steam-for-linux#13269](https://github.com/ValveSoftware/steam-for-linux/issues/13269)) — and the working fix: proprietary `nvidia-580xx` with `NVreg_EnableGpuFirmware=0`. |
 
-## The GLVND trap (read this!)
+### The GLVND trap (read this!)
 
 The NVIDIA EGL vendor (which owns the display) **intercepts every EGL device
 index**. So plain `DRI_PRIME=...` silently does nothing for GL/EGL apps —
@@ -53,11 +58,11 @@ $ igpu-run eglinfo -B | grep vendor
 EGL vendor string: Mesa Project
 ```
 
-## ⚠️ Which apps actually offload
+### ⚠️ Which apps actually offload
 
 | App | Toolkit | Offloads? |
 |---|---|---|
-| Telegram | Qt (system EGL/Mesa) | ✅ **yes** — verified 350 ms iGPU engine time, holds only `renderD128` |
+| Telegram | Qt (system EGL/Mesa) | ✅ **yes** — verified 2 s+ iGPU engine time, holds only `renderD128` |
 | GTK apps (nautilus, gnome-*) | GTK4/GL (Mesa) | ✅ yes |
 | mpv, games with Vulkan/GL via Mesa | Mesa | ✅ yes |
 | **Chromium-family** (Brave, Chrome, Discord, Spotify/CEF) | **bundles its own ANGLE** (`libGLESv2.so` inside the app dir) | ❌ **no** — the bundled ANGLE ignores system EGL vendor env and picks the default device (dGPU) |
@@ -65,11 +70,11 @@ EGL vendor string: Mesa Project
 For Chromium-family apps, options are: keep them on the dGPU (fine), or run
 them with `--use-angle=swiftshader` (software rendering — not recommended).
 
-## Install
+### Install & usage
 
 ```bash
-git clone https://github.com/zidanefaqih/igpu-offload.git
-cd igpu-offload
+git clone https://github.com/zidanefaqih/arch-hybrid-gpu.git
+cd arch-hybrid-gpu
 install -m 755 bin/igpu-run ~/.local/bin/
 ```
 
@@ -78,13 +83,13 @@ Then, to make an app always launch on the iGPU, override its original
 `/usr/share/applications/`) by wrapping `Exec=` with `igpu-run`:
 
 ```bash
-cp /usr/share/applications/org.telegram.desktop.desktop    ~/.local/share/applications/
-sed -i 's|^Exec=Telegram|Exec=igpu-run Telegram|'    ~/.local/share/applications/org.telegram.desktop.desktop
+cp /usr/share/applications/org.telegram.desktop.desktop \
+   ~/.local/share/applications/
+sed -i 's|^Exec=Telegram|Exec=igpu-run Telegram|' \
+   ~/.local/share/applications/org.telegram.desktop.desktop
 ```
 
 Same name, same icon — the launcher just works, no duplicate entries.
-
-## Usage
 
 ```bash
 # ad-hoc
@@ -104,21 +109,68 @@ for fd in /proc/<pid>/fdinfo/*; do
 done
 ```
 
-## ⚠️ Do NOT do this
+### ⚠️ Do NOT do this
 
 **Never move the compositor (Hyprland) to the iGPU** via
-`AQ_DRM_DEVICES=/dev/dri/card1:/dev/dri/card0` (iGPU-first) on nvidia-open.
+`AQ_DRM_DEVICES=/dev/dri/card1:/dev/dri/card0` (iGPU-first) on nvidia.
 
-On this hardware that caused repeated full GPU crashes:
-
-```
-Xid 62 (GSP/PMU halted) → Xid 154 (PF FLR) → Xid 44 (MMU fault)
-→ external display drops → RmInitAdapter failed (0x62:0x55)
-→ requires cold power cycle
-```
+On this hardware that caused a full GPU hang requiring a cold boot
+(`Xid 62` / `RmInitAdapter failed 0x62:0x55`).
 
 App-level offload (this repo) is safe because the compositor never moves.
-Full story and the PM fix: [`docs/nvidia-crash-fix.md`](docs/nvidia-crash-fix.md).
+
+---
+
+## 2. Fix NVIDIA GSP crashes (`Xid 62`)
+
+The open kernel modules (`nvidia-open`) **require GSP firmware**. On this
+laptop the GSP crashed three times with `Xid 62: PMU has halted`, each time
+requiring a **cold power cycle**.
+
+Worse, the hang silently breaks the GL stack: EGL falls back to llvmpipe and
+Xwayland GLX stops creating contexts, so any app calling
+`glGetString(GL_EXTENSIONS)` gets `NULL`. That is why **Steam segfaults on
+launch** (upstream bug:
+[steam-for-linux#13269](https://github.com/ValveSoftware/steam-for-linux/issues/13269) /
+[#13627](https://github.com/ValveSoftware/steam-for-linux/issues/13627)) —
+a symptom, not the cause.
+
+### The fix
+
+Use the proprietary 580xx modules (they still support the legacy RM init
+path) and turn GSP off — driver README chapter *"44B. DISABLING GSP MODE"*:
+
+```bash
+paru -S nvidia-580xx-dkms nvidia-580xx-utils lib32-nvidia-580xx-utils
+```
+
+```bash
+sudo tee /etc/modprobe.d/nvidia-pm-fix.conf <<'EOF'
+# Disable GSP: the GSP firmware crashed repeatedly on this laptop with the
+# open modules (Xid 62 "PMU has halted" -> Xid 154 -> Xid 16 -> RmInitAdapter
+# failed 0x62:0x55), each time requiring a cold power cycle.
+# The proprietary module can run without GSP (driver README 44B).
+options nvidia NVreg_EnableGpuFirmware=0 NVreg_PreserveVideoMemoryAllocations=1 NVreg_TemporaryFilePath=/var/tmp
+EOF
+
+sudo mkinitcpio -P && sudo reboot
+```
+
+Verify:
+
+```console
+$ nvidia-smi -q | grep 'GSP Firmware Version'
+    GSP Firmware Version                               : N/A
+$ grep EnableGpuFirmware /proc/driver/nvidia/params
+EnableGpuFirmware: 0
+$ eglinfo -B | grep 'EGL vendor'
+EGL vendor string: NVIDIA
+```
+
+**📖 Full write-up with kernel logs, the Steam crash backtrace, what did *not*
+work, and a rollback recipe: [`docs/nvidia-crash-fix.md`](docs/nvidia-crash-fix.md)**
+
+---
 
 ## License
 
